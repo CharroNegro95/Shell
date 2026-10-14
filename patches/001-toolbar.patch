@@ -1,5 +1,5 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..362708d 100644
+index e7239da..dc84fe4 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
 @@ -320,6 +320,16 @@ namespace Nilesoft
@@ -109,9 +109,9 @@ index e7239da..362708d 100644
 +								_context._this = &_this;
 +								_context.variables.local = &item->owner->variables;
 +
-+								for(auto list : { &tbList.Top, &tbList.Custom, &tbList.Middle, &tbList.Auto, &tbList.Bottom })
++								for(auto plist : { &tbList.Top, &tbList.Custom, &tbList.Middle, &tbList.Auto, &tbList.Bottom })
 +								{
-+									for(auto child : *list)
++									for(auto child : *plist)
 +									{
 +										if(child && !child->is_separator() && !child->is_popup())
 +											mii->toolbar.items.push_back(child);
@@ -197,7 +197,7 @@ index e7239da..362708d 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2690,214 @@ namespace Nilesoft
+@@ -2573,9 +2690,215 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -234,7 +234,8 @@ index e7239da..362708d 100644
 +			for(long i = 0; i < n; i++)
 +			{
 +				const long zl = left + i * slot;
-+				const long zr = (i == n - 1) ? std::max(right, zl + slot) : zl + slot;
++				// sin std::max: windows.h define la macro max y rompe la llamada
++				const long zr = (i == n - 1 && right > zl + slot) ? right : zl + slot;
 +				const long x = zl + ((zr - zl) - cell) / 2;
 +				out.push_back(RECT{ x, y, x + cell, y + cell });
 +				if(zones) zones->push_back(RECT{ zl, rc.top, zr, rc.bottom });
@@ -412,7 +413,7 @@ index e7239da..362708d 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4500,6 +4822,7 @@ namespace Nilesoft
+@@ -4500,6 +4823,7 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -420,7 +421,7 @@ index e7239da..362708d 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +4901,26 @@ namespace Nilesoft
+@@ -4578,7 +4902,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -448,7 +449,7 @@ index e7239da..362708d 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -6396,6 +6738,7 @@ namespace Nilesoft
+@@ -6396,6 +6739,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
