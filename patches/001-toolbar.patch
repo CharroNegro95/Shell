@@ -1,17 +1,22 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..dc84fe4 100644
+index e7239da..01d1a00 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
-@@ -320,6 +320,16 @@ namespace Nilesoft
+@@ -320,6 +320,21 @@ namespace Nilesoft
  							continue;
  					}
  
-+					// boton de toolbar con sys=id.xxx: solo existe si Windows ofrece esa entrada
++					// boton de toolbar con sys=: solo existe si Windows ofrece esa entrada.
++					//   sys=id.share                      -> por id de Nilesoft
++					//   sys='Editar en el Bloc de notas|Edit' -> por texto (en orden de preferencia)
 +					menuitem_t *sys_item = nullptr;
 +					if(item->toolbar_sys)
 +					{
-+						auto target = _context.eval_number<uint32_t>(item->toolbar_sys, 0);
-+						sys_item = find_system_item(target);
++						Object sys_obj = _context.Eval(item->toolbar_sys).move();
++						if(sys_obj.is_string())
++							sys_item = find_system_item_by_title(sys_obj.to_string());
++						else if(sys_obj.is_number())
++							sys_item = find_system_item(sys_obj.to_number<uint32_t>());
 +						if(!sys_item)
 +							continue;
 +					}
@@ -19,7 +24,7 @@ index e7239da..dc84fe4 100644
  					string value;
  
  					if(!item->is_separator() && !moved)
-@@ -506,6 +516,13 @@ namespace Nilesoft
+@@ -506,6 +521,13 @@ namespace Nilesoft
  							}
  						}
  
@@ -33,7 +38,7 @@ index e7239da..dc84fe4 100644
  						mii->separator = (int)_context.parse_separator(item->separator);
  						mii->column = _context.eval_number<int>(item->column, 0);
  						mii->type = NativeMenuType::Item;
-@@ -544,7 +561,7 @@ namespace Nilesoft
+@@ -544,7 +566,7 @@ namespace Nilesoft
  									//use the resolved image location
  									if(item->image.import == ImageImport::Image)
  									{
@@ -42,7 +47,7 @@ index e7239da..dc84fe4 100644
  										{
  											if(mii->image.import == ImageImport::Inherit)
  											{
-@@ -605,7 +622,7 @@ namespace Nilesoft
+@@ -605,7 +627,7 @@ namespace Nilesoft
  										}
  									}
  
@@ -51,7 +56,7 @@ index e7239da..dc84fe4 100644
  									{
  										/*if(mii->image_select.import == ImageImport::Inherit)
  										{
-@@ -649,7 +666,77 @@ namespace Nilesoft
+@@ -649,7 +671,77 @@ namespace Nilesoft
  							//mii->tip = item->tip;
  							_context.eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
  
@@ -130,7 +135,7 @@ index e7239da..dc84fe4 100644
  							{
  								mii->set_popup_menu();
  								//mii->destory = false;
-@@ -1460,6 +1547,16 @@ namespace Nilesoft
+@@ -1460,6 +1552,16 @@ namespace Nilesoft
  								menu->draw.height = rc.bottom;
  						}
  
@@ -147,7 +152,7 @@ index e7239da..dc84fe4 100644
  						menu->popup_height += item->size.cy +
  							_theme.back.padding.top + _theme.back.padding.bottom + 
  							_theme.back.margin.top + _theme.back.margin.bottom;
-@@ -1551,6 +1648,11 @@ namespace Nilesoft
+@@ -1551,6 +1653,11 @@ namespace Nilesoft
  
  			_tip.hide();
  
@@ -159,7 +164,7 @@ index e7239da..dc84fe4 100644
  			/*
  			if(!menu->is_dynamic())
  				menu->dynamics.clear();
-@@ -2078,6 +2180,14 @@ namespace Nilesoft
+@@ -2078,6 +2185,14 @@ namespace Nilesoft
  
  			auto mii = get_item(di->itemID, hMenu, _items);
  
@@ -174,7 +179,7 @@ index e7239da..dc84fe4 100644
  			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
  			{
  				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
-@@ -2505,7 +2615,13 @@ namespace Nilesoft
+@@ -2505,7 +2620,13 @@ namespace Nilesoft
  			{
  				mi->itemWidth = _theme.back.width();
  				auto mii = get_item(mi->itemID, menu->handle, _items);
@@ -189,7 +194,7 @@ index e7239da..dc84fe4 100644
  				{
  					if(mii->cch == 0)
  					{
-@@ -2559,6 +2675,7 @@ namespace Nilesoft
+@@ -2559,6 +2680,7 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnEnd()
  		{
@@ -197,7 +202,7 @@ index e7239da..dc84fe4 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2690,215 @@ namespace Nilesoft
+@@ -2573,9 +2695,266 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -256,25 +261,76 @@ index e7239da..dc84fe4 100644
 +			return -1;
 +		}
 +
-+		// Busca en el menu original de Windows la entrada con ese id (id.share, id.edit...).
-+		menuitem_t *ContextMenu::find_system_item(uint32_t uid) const
++		// Entradas ejecutables del menu original de Windows, en el orden del menu.
++		static void collect_system_items(const std::vector<menuitem_t *> &list, std::vector<menuitem_t *> &out)
 +		{
-+			if(!__system_menu_tree || uid == 0) return nullptr;
-+			std::vector<menuitem_t *> stack(__system_menu_tree->items.begin(), __system_menu_tree->items.end());
-+			while(!stack.empty())
++			for(auto it : list)
 +			{
-+				auto it = stack.back();
-+				stack.pop_back();
 +				if(!it) continue;
 +				if(it->is_menu())
 +				{
-+					for(auto c : it->items) stack.push_back(c);
++					collect_system_items(it->items, out);
 +					continue;
 +				}
 +				if(it->is_separator() || it->wid == 0 || it->wid == (uint32_t)-1)
 +					continue;
-+				if(it->uid() == uid)
++				out.push_back(it);
++			}
++		}
++
++		// Texto comparable: sin '&', sin atajo tras '\t', sin espacios extremos, en minusculas.
++		static std::wstring normalize_title(const wchar_t *s)
++		{
++			std::wstring w = s ? s : L"";
++			std::erase(w, L'&');
++			if(auto p = w.find(L'\t'); p != std::wstring::npos)
++				w.resize(p);
++			while(!w.empty() && iswspace(w.back())) w.pop_back();
++			size_t b = 0;
++			while(b < w.size() && iswspace(w[b])) b++;
++			w.erase(0, b);
++			for(auto &ch : w) ch = (wchar_t)towlower(ch);
++			return w;
++		}
++
++		// Busca en el menu original de Windows la entrada con ese id (id.share, id.edit...).
++		menuitem_t *ContextMenu::find_system_item(uint32_t uid) const
++		{
++			if(!__system_menu_tree || uid == 0) return nullptr;
++			std::vector<menuitem_t *> all;
++			collect_system_items(__system_menu_tree->items, all);
++			for(auto it : all)
++			{
++				if(it->uid() == uid || it->hash == uid)
 +					return it;
++			}
++			return nullptr;
++		}
++
++		// Busca por texto: patrones separados por '|', en orden de preferencia.
++		// Un patron coincide si el titulo es igual o empieza con el (sin importar mayusculas).
++		menuitem_t *ContextMenu::find_system_item_by_title(const string &patterns) const
++		{
++			if(!__system_menu_tree) return nullptr;
++			std::vector<menuitem_t *> all;
++			collect_system_items(__system_menu_tree->items, all);
++
++			std::wstring src = patterns.c_str();
++			size_t start = 0;
++			while(start <= src.size())
++			{
++				auto end = src.find(L'|', start);
++				if(end == std::wstring::npos) end = src.size();
++				auto pat = normalize_title(src.substr(start, end - start).c_str());
++				start = end + 1;
++				if(pat.empty()) continue;
++
++				for(auto it : all)
++				{
++					auto t = normalize_title(it->title.c_str());
++					if(t.size() >= pat.size() && t.compare(0, pat.size(), pat) == 0)
++						return it;
++				}
 +			}
 +			return nullptr;
 +		}
@@ -413,7 +469,7 @@ index e7239da..dc84fe4 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4500,6 +4823,7 @@ namespace Nilesoft
+@@ -4500,6 +4879,7 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -421,7 +477,7 @@ index e7239da..dc84fe4 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +4902,26 @@ namespace Nilesoft
+@@ -4578,7 +4958,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -449,7 +505,7 @@ index e7239da..dc84fe4 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -6396,6 +6739,7 @@ namespace Nilesoft
+@@ -6396,6 +6795,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
@@ -458,10 +514,10 @@ index e7239da..dc84fe4 100644
  							/*if(!ctx->HWNDMenu)
  							{
 diff --git a/src/dll/src/Include/ContextMenu.h b/src/dll/src/Include/ContextMenu.h
-index 3a3743b..6f18312 100644
+index 3a3743b..67a121d 100644
 --- a/src/dll/src/Include/ContextMenu.h
 +++ b/src/dll/src/Include/ContextMenu.h
-@@ -716,6 +716,17 @@ plutovg_move_to(pluto, start.x, start.y);
+@@ -716,6 +716,18 @@ plutovg_move_to(pluto, start.x, start.y);
  
  
  			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
@@ -476,6 +532,7 @@ index 3a3743b..6f18312 100644
 +			void toolbar_stop();
 +			void draw_toolbar(DC &dc, MenuItemInfo *tb, const RECT &rc);
 +			menuitem_t *find_system_item(uint32_t uid) const;
++			menuitem_t *find_system_item_by_title(const string &patterns) const;
  			LRESULT OnStart();
  			LRESULT OnEnd();
  
