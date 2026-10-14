@@ -1,5 +1,5 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..01d1a00 100644
+index e7239da..ccff6a4 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
 @@ -320,6 +320,21 @@ namespace Nilesoft
@@ -202,7 +202,7 @@ index e7239da..01d1a00 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2695,266 @@ namespace Nilesoft
+@@ -2573,9 +2695,245 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -261,23 +261,6 @@ index e7239da..01d1a00 100644
 +			return -1;
 +		}
 +
-+		// Entradas ejecutables del menu original de Windows, en el orden del menu.
-+		static void collect_system_items(const std::vector<menuitem_t *> &list, std::vector<menuitem_t *> &out)
-+		{
-+			for(auto it : list)
-+			{
-+				if(!it) continue;
-+				if(it->is_menu())
-+				{
-+					collect_system_items(it->items, out);
-+					continue;
-+				}
-+				if(it->is_separator() || it->wid == 0 || it->wid == (uint32_t)-1)
-+					continue;
-+				out.push_back(it);
-+			}
-+		}
-+
 +		// Texto comparable: sin '&', sin atajo tras '\t', sin espacios extremos, en minusculas.
 +		static std::wstring normalize_title(const wchar_t *s)
 +		{
@@ -296,10 +279,8 @@ index e7239da..01d1a00 100644
 +		// Busca en el menu original de Windows la entrada con ese id (id.share, id.edit...).
 +		menuitem_t *ContextMenu::find_system_item(uint32_t uid) const
 +		{
-+			if(!__system_menu_tree || uid == 0) return nullptr;
-+			std::vector<menuitem_t *> all;
-+			collect_system_items(__system_menu_tree->items, all);
-+			for(auto it : all)
++			if(uid == 0) return nullptr;
++			for(auto it : __toolbar_sys_items)
 +			{
 +				if(it->uid() == uid || it->hash == uid)
 +					return it;
@@ -311,9 +292,7 @@ index e7239da..01d1a00 100644
 +		// Un patron coincide si el titulo es igual o empieza con el (sin importar mayusculas).
 +		menuitem_t *ContextMenu::find_system_item_by_title(const string &patterns) const
 +		{
-+			if(!__system_menu_tree) return nullptr;
-+			std::vector<menuitem_t *> all;
-+			collect_system_items(__system_menu_tree->items, all);
++			const auto &all = __toolbar_sys_items;
 +
 +			std::wstring src = patterns.c_str();
 +			size_t start = 0;
@@ -469,7 +448,26 @@ index e7239da..01d1a00 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4500,6 +4879,7 @@ namespace Nilesoft
+@@ -4470,6 +4828,18 @@ namespace Nilesoft
+ 				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
+ 					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
+ 
++				// toolbar: entradas ejecutables del primer nivel, tal como las puso Windows.
++				// Se toman antes de aplicar modify/remove, porque esas reglas sacan del
++				// arbol las entradas ocultas o movidas (p. ej. a "Mas opciones"), y la
++				// barra debe poder usarlas igual. Los punteros siguen vivos: al quitarlas
++				// del arbol no se liberan.
++				__toolbar_sys_items.clear();
++				for(auto it : __system_menu_tree->items)
++				{
++					if(it && !it->is_menu() && !it->is_separator() && it->wid != 0 && it->wid != (uint32_t)-1)
++						__toolbar_sys_items.push_back(it);
++				}
++
+ 				if(_settings.modify_items.enabled)
+ 					build_main_system_menuitems(__system_menu_tree, true);
+ 
+@@ -4500,6 +4870,7 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -477,7 +475,7 @@ index e7239da..01d1a00 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +4958,26 @@ namespace Nilesoft
+@@ -4578,7 +4949,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -505,7 +503,7 @@ index e7239da..01d1a00 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -6396,6 +6795,7 @@ namespace Nilesoft
+@@ -6396,6 +6786,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
@@ -514,10 +512,10 @@ index e7239da..01d1a00 100644
  							/*if(!ctx->HWNDMenu)
  							{
 diff --git a/src/dll/src/Include/ContextMenu.h b/src/dll/src/Include/ContextMenu.h
-index 3a3743b..67a121d 100644
+index 3a3743b..27109b3 100644
 --- a/src/dll/src/Include/ContextMenu.h
 +++ b/src/dll/src/Include/ContextMenu.h
-@@ -716,6 +716,18 @@ plutovg_move_to(pluto, start.x, start.y);
+@@ -716,6 +716,19 @@ plutovg_move_to(pluto, start.x, start.y);
  
  
  			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
@@ -533,6 +531,7 @@ index 3a3743b..67a121d 100644
 +			void draw_toolbar(DC &dc, MenuItemInfo *tb, const RECT &rc);
 +			menuitem_t *find_system_item(uint32_t uid) const;
 +			menuitem_t *find_system_item_by_title(const string &patterns) const;
++			std::vector<menuitem_t *> __toolbar_sys_items;	// primer nivel, antes de modify/remove
  			LRESULT OnStart();
  			LRESULT OnEnd();
  
