@@ -1,0 +1,617 @@
+diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
+index e7239da..362708d 100644
+--- a/src/dll/src/ContextMenu.cpp
++++ b/src/dll/src/ContextMenu.cpp
+@@ -320,6 +320,16 @@ namespace Nilesoft
+ 							continue;
+ 					}
+ 
++					// boton de toolbar con sys=id.xxx: solo existe si Windows ofrece esa entrada
++					menuitem_t *sys_item = nullptr;
++					if(item->toolbar_sys)
++					{
++						auto target = _context.eval_number<uint32_t>(item->toolbar_sys, 0);
++						sys_item = find_system_item(target);
++						if(!sys_item)
++							continue;
++					}
++
+ 					string value;
+ 
+ 					if(!item->is_separator() && !moved)
+@@ -506,6 +516,13 @@ namespace Nilesoft
+ 							}
+ 						}
+ 
++						if(sys_item)
++						{
++							mii->sys_wid = sys_item->wid;
++							if(sys_item->disabled)
++								visibility = Visibility::Disabled;
++						}
++
+ 						mii->separator = (int)_context.parse_separator(item->separator);
+ 						mii->column = _context.eval_number<int>(item->column, 0);
+ 						mii->type = NativeMenuType::Item;
+@@ -544,7 +561,7 @@ namespace Nilesoft
+ 									//use the resolved image location
+ 									if(item->image.import == ImageImport::Image)
+ 									{
+-										if(_context.Image(item->image.expr, mii, font.icon, false))
++										if(_context.Image(item->image.expr, mii, _icon_font_override ? _icon_font_override : font.icon.get(), false))
+ 										{
+ 											if(mii->image.import == ImageImport::Inherit)
+ 											{
+@@ -605,7 +622,7 @@ namespace Nilesoft
+ 										}
+ 									}
+ 
+-									if(_context.Image(item->images.select, mii, font.icon, true))
++									if(_context.Image(item->images.select, mii, _icon_font_override ? _icon_font_override : font.icon.get(), true))
+ 									{
+ 										/*if(mii->image_select.import == ImageImport::Inherit)
+ 										{
+@@ -649,7 +666,77 @@ namespace Nilesoft
+ 							//mii->tip = item->tip;
+ 							_context.eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
+ 
+-							if(item->is_menu())
++							if(sys_item && !mii->tip && !sys_item->title.empty())
++							{
++								std::wstring ws = sys_item->title.c_str();
++								std::erase(ws, L'&');
++								if(auto tabpos = ws.find(L'\t'); tabpos != std::wstring::npos)
++									ws.resize(tabpos);
++								mii->tip.text = string(ws.c_str());
++							}
++
++							// si image= no produjo icono, se usa el que trae la entrada de Windows
++							if(sys_item && sys_item->image && !mii->image.hbitmap && mii->image.import != ImageImport::Draw)
++							{
++								BITMAP bm{};
++								if(::GetObjectW(sys_item->image, sizeof(bm), &bm))
++								{
++									mii->image.hbitmap = sys_item->image;
++									mii->image.size = { bm.bmWidth, std::abs(bm.bmHeight) };
++									mii->image.inherited = true;	// el bitmap es de Windows: no se libera
++									mii->image.import = ImageImport::Image;
++								}
++							}
++
++							if(item->toolbar)
++							{
++								// Tamano de los iconos: size=N (px logicos) o el del tema.
++								long tsize = (long)_theme.image.size;
++								if(item->toolbar_size)
++								{
++									auto v = _context.eval_number<int>(item->toolbar_size, 0);
++									if(v > 0) tsize = dpi((long)v);
++								}
++								tsize = std::clamp<long>(tsize, dpi(8L), dpi(64L));
++
++								// Prepara los botones como entradas normales, pero con el
++								// tamano de imagen y la fuente de glifos de la barra.
++								PositionList tbList;
++								{
++									auto saved_size = _theme.image.size;
++									auto saved_font = _icon_font_override;
++									_theme.image.size = static_cast<decltype(saved_size)>(tsize);
++									_icon_font_override = Initializer::instance->cache->fonts.add(font.icon.Name, (int)tsize, dpi.val, font.icon.CharSet);
++									try
++									{
++										prepare_new_items(tbList, item->items, mii, menu, true);
++									}
++									catch(...) {}
++									_theme.image.size = saved_size;
++									_icon_font_override = saved_font;
++								}
++								// la llamada anidada reemplaza el contexto: se restaura
++								_context._this = &_this;
++								_context.variables.local = &item->owner->variables;
++
++								for(auto list : { &tbList.Top, &tbList.Custom, &tbList.Middle, &tbList.Auto, &tbList.Bottom })
++								{
++									for(auto child : *list)
++									{
++										if(child && !child->is_separator() && !child->is_popup())
++											mii->toolbar.items.push_back(child);
++									}
++								}
++
++								if(mii->toolbar.items.empty())
++									continue;
++
++								mii->toolbar.enabled = true;
++								mii->toolbar.size = tsize;
++								mii->toolbar.cell = tsize + dpi(12L);
++								mii->toolbar.gap = dpi(4L);
++							}
++							else if(item->is_menu())
+ 							{
+ 								mii->set_popup_menu();
+ 								//mii->destory = false;
+@@ -1460,6 +1547,16 @@ namespace Nilesoft
+ 								menu->draw.height = rc.bottom;
+ 						}
+ 
++						if(item->is_toolbar())
++						{
++							item->toolbar.hot = -1;
++							item->size.cy = item->toolbar.cell;
++							_toolbars.push_back(item);
++							// el menu modal no entrega WM_MOUSEMOVE: se sigue el cursor con un timer
++							if(hwnd.owner)
++								::SetTimer(hwnd.owner, TOOLBAR_TIMER, 30, nullptr);
++						}
++
+ 						menu->popup_height += item->size.cy +
+ 							_theme.back.padding.top + _theme.back.padding.bottom + 
+ 							_theme.back.margin.top + _theme.back.margin.bottom;
+@@ -1551,6 +1648,11 @@ namespace Nilesoft
+ 
+ 			_tip.hide();
+ 
++			// la barra deja de existir con su menu
++			std::erase_if(_toolbars, [hMenu](MenuItemInfo *tb) { return !tb || tb->handle == hMenu; });
++			if(_toolbars.empty() && hwnd.owner)
++				::KillTimer(hwnd.owner, TOOLBAR_TIMER);
++
+ 			/*
+ 			if(!menu->is_dynamic())
+ 				menu->dynamics.clear();
+@@ -2078,6 +2180,14 @@ namespace Nilesoft
+ 
+ 			auto mii = get_item(di->itemID, hMenu, _items);
+ 
++			if(mii && mii->is_toolbar())
++			{
++				dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
++				draw_toolbar(dc, mii, di->rcItem);
++				dc.exclude_clip_rect(*rc);
++				return TRUE;
++			}
++
+ 			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
+ 			{
+ 				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
+@@ -2505,7 +2615,13 @@ namespace Nilesoft
+ 			{
+ 				mi->itemWidth = _theme.back.width();
+ 				auto mii = get_item(mi->itemID, menu->handle, _items);
+-				if(mii)
++				if(mii && mii->is_toolbar())
++				{
++					auto n = (long)mii->toolbar.items.size();
++					mi->itemHeight = (UINT)(mii->toolbar.cell + _theme.back.height() + dpi(4L));
++					mi->itemWidth += (UINT)(n * mii->toolbar.cell + (n - 1) * mii->toolbar.gap);
++				}
++				else if(mii)
+ 				{
+ 					if(mii->cch == 0)
+ 					{
+@@ -2559,6 +2675,7 @@ namespace Nilesoft
+ 
+ 		LRESULT ContextMenu::OnEnd()
+ 		{
++			toolbar_stop();
+ 			Selections::point = { 0, 0 };
+ 			//InvokeCommand(selectid);
+ 			current.zero();
+@@ -2573,9 +2690,214 @@ namespace Nilesoft
+ 
+ 		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
+ 		{
++			if(nIDEvent == TOOLBAR_TIMER)
++			{
++				toolbar_track();
++				return 0;
++			}
+ 			return msg.invoke();
+ 		}
+ 
++		// ------------------------------------------------------------------
++		// toolbar
++		// ------------------------------------------------------------------
++
++		// Rectangulos de los botones repartidos a lo ancho de la fila rc:
++		// la fila se divide en partes iguales (zones) y cada boton va centrado
++		// en la suya, asi la barra ocupa todo el ancho del menu.
++		void ContextMenu::toolbar_layout(const MenuItemInfo *tb, const RECT &rc, std::vector<RECT> &out, std::vector<RECT> *zones) const
++		{
++			out.clear();
++			if(zones) zones->clear();
++			const long n = (long)tb->toolbar.items.size();
++			if(n <= 0) return;
++
++			const long cell = tb->toolbar.cell;
++			const long left = rc.left + (long)_theme.back.margin.left;
++			const long right = rc.right - (long)_theme.back.margin.right;
++			const long y = rc.top + ((rc.bottom - rc.top) - cell) / 2;
++
++			long slot = (right - left) / n;
++			if(slot < cell) slot = cell;
++
++			for(long i = 0; i < n; i++)
++			{
++				const long zl = left + i * slot;
++				const long zr = (i == n - 1) ? std::max(right, zl + slot) : zl + slot;
++				const long x = zl + ((zr - zl) - cell) / 2;
++				out.push_back(RECT{ x, y, x + cell, y + cell });
++				if(zones) zones->push_back(RECT{ zl, rc.top, zr, rc.bottom });
++			}
++		}
++
++		// Boton cuya zona contiene pt; -1 si ninguno.
++		int ContextMenu::toolbar_hit(const MenuItemInfo *tb, const RECT &rc, POINT pt) const
++		{
++			if(pt.y < rc.top || pt.y >= rc.bottom) return -1;
++			std::vector<RECT> btns, zones;
++			toolbar_layout(tb, rc, btns, &zones);
++			for(int i = 0; i < (int)zones.size(); i++)
++			{
++				if(pt.x >= zones[i].left && pt.x < zones[i].right)
++					return i;
++			}
++			return -1;
++		}
++
++		// Busca en el menu original de Windows la entrada con ese id (id.share, id.edit...).
++		menuitem_t *ContextMenu::find_system_item(uint32_t uid) const
++		{
++			if(!__system_menu_tree || uid == 0) return nullptr;
++			std::vector<menuitem_t *> stack(__system_menu_tree->items.begin(), __system_menu_tree->items.end());
++			while(!stack.empty())
++			{
++				auto it = stack.back();
++				stack.pop_back();
++				if(!it) continue;
++				if(it->is_menu())
++				{
++					for(auto c : it->items) stack.push_back(c);
++					continue;
++				}
++				if(it->is_separator() || it->wid == 0 || it->wid == (uint32_t)-1)
++					continue;
++				if(it->uid() == uid)
++					return it;
++			}
++			return nullptr;
++		}
++
++		// Llamado por el timer y por WM_ENTERIDLE: actualiza el boton bajo el cursor.
++		void ContextMenu::toolbar_track()
++		{
++			if(_toolbars.empty()) return;
++
++			POINT pt{};
++			if(!::GetCursorPos(&pt)) return;
++
++			for(auto tb : _toolbars)
++			{
++				if(!tb || !::IsMenu(tb->handle)) continue;
++
++				auto index = MENU::get_index(tb->handle, tb->wID);
++				if(index == MF_NOITEM) continue;
++
++				RECT rc{};
++				if(!::GetMenuItemRect(nullptr, tb->handle, index, &rc)) continue;
++
++				int hot = ::PtInRect(&rc, pt) ? toolbar_hit(tb, rc, pt) : -1;
++				if(hot == tb->toolbar.hot) continue;
++				tb->toolbar.hot = hot;
++				if(hot < 0) _tip.hide();
++
++				// ventana del menu que contiene la barra
++				HWND hwndMenu{};
++				if(auto it = map_menu_wnd.find(tb->handle); it != map_menu_wnd.end())
++					hwndMenu = it->second.hwnd;
++				if(!hwndMenu)
++				{
++					for(auto &w : _map)
++					{
++						if(w.second.hMenu == tb->handle) { hwndMenu = w.first; break; }
++					}
++				}
++
++				if(hwndMenu)
++				{
++					::MapWindowPoints(HWND_DESKTOP, hwndMenu, reinterpret_cast<POINT *>(&rc), 2);
++					::InvalidateRect(hwndMenu, &rc, FALSE);
++				}
++			}
++		}
++
++		void ContextMenu::toolbar_stop()
++		{
++			if(hwnd.owner)
++				::KillTimer(hwnd.owner, TOOLBAR_TIMER);
++			_toolbars.clear();
++		}
++
++		void ContextMenu::draw_toolbar(DC &dc, MenuItemInfo *tb, const RECT &rcRow)
++		{
++			std::vector<RECT> btns;
++			toolbar_layout(tb, rcRow, btns);
++
++			const long isz = tb->toolbar.size;
++			const long cell = tb->toolbar.cell;
++
++			for(int i = 0; i < (int)btns.size(); i++)
++			{
++				auto child = tb->toolbar.items[i];
++				const RECT b = btns[i];
++				const bool hot = (i == tb->toolbar.hot);
++				const bool disabled = child->visibility != Visibility::Enabled;
++
++				Color text_color = hot ? _theme.text.color.sel : _theme.text.color.nor;
++				if(disabled) text_color = hot ? _theme.text.color.sel_dis : _theme.text.color.nor_dis;
++
++				if(hot)
++				{
++					Color back = disabled ? _theme.back.color.sel_dis : _theme.back.color.sel;
++					Color border = disabled ? _theme.back.border.sel_dis : _theme.back.border.sel;
++					draw_rect(&dc, POINT{ b.left, b.top }, SIZE{ cell, cell }, back, border, _theme.back.radius);
++				}
++
++				auto image = &child->image;
++				if(hot && child->image_select.isvalid())
++					image = &child->image_select;
++
++				if(image->hbitmap)
++				{
++					DC memDC(::CreateCompatibleDC(dc), 1);
++					if(memDC)
++					{
++						if(memDC.select_bitmap(image->hbitmap))
++						{
++							const long w = image->size.cx > 0 ? image->size.cx : isz;
++							const long h = image->size.cy > 0 ? image->size.cy : isz;
++							POINT p = { b.left + (cell - w) / 2, b.top + (cell - h) / 2 };
++							dc.draw_image(p, SIZE{ w, h }, memDC, disabled ? 64 : 255);
++							memDC.reset_bitmap();
++						}
++					}
++				}
++				else if(image->import == ImageImport::Draw && image->draw.type == image->draw.DT_GLYPH)
++				{
++					auto g = &image->draw.glyph;
++					if(g->font)
++					{
++						Color c0 = g->color[0], c1 = g->color[1];
++						if(!c0) c0 = _theme.image.color[0] ? _theme.image.color[0] : text_color;
++						if(!c1) c1 = _theme.image.color[0] ? _theme.image.color[1] : text_color;
++						if(disabled) { c0.opacities(); c1.opacities(); }
++
++						const Rect rcGlyph(b);
++						const DWORD fmt = DT_NOCLIP | DT_SINGLELINE | DT_VCENTER | DT_CENTER;
++						if(g->code[0])
++							draw_string(dc, g->font, &rcGlyph, c0, &g->code[0], 1, fmt);
++						if(g->code[1])
++							draw_string(dc, g->font, &rcGlyph, c1, &g->code[1], 1, fmt);
++					}
++				}
++			}
++
++			// tooltip del boton activo, junto al boton (coordenadas de pantalla)
++			const int hot = tb->toolbar.hot;
++			if(hot >= 0 && hot < (int)tb->toolbar.items.size() && tb->toolbar.items[hot]->tip)
++			{
++				auto index = MENU::get_index(tb->handle, tb->wID);
++				RECT rs{};
++				if(index != MF_NOITEM && ::GetMenuItemRect(nullptr, tb->handle, index, &rs))
++				{
++					std::vector<RECT> sbtns;
++					toolbar_layout(tb, rs, sbtns);
++					auto child = tb->toolbar.items[hot];
++					_tip.show(child->tip.text, child->tip.type, child->tip.time, Rect(sbtns[hot]));
++				}
++			}
++		}
++
++
+ 		void ContextMenu::init_cfg()
+ 		{
+ 			//SystemParametersInfoForDpi
+@@ -4500,6 +4822,7 @@ namespace Nilesoft
+ 					_hMenu = nullptr;
+ 				}
+ 
++				toolbar_stop();
+ 				_windowSubclass.unhook();
+ 
+ 				if(_hTheme)
+@@ -4578,7 +4901,26 @@ namespace Nilesoft
+ 						}
+ 					}
+ 
+-					id = 0;
++					// toolbar: el clic llega con el id de la fila; se ejecuta el boton bajo el cursor
++					uint32_t sys_id = 0;
++					if(invoke_item && invoke_item->is_toolbar())
++					{
++						auto hot = invoke_item->toolbar.hot;
++						auto &tb_items = invoke_item->toolbar.items;
++						invoke_item = (hot >= 0 && hot < (int)tb_items.size()) ? tb_items[hot] : nullptr;
++
++						if(invoke_item && invoke_item->visibility != Visibility::Enabled)
++							invoke_item = nullptr;
++
++						// boton sys=: lo ejecuta el Explorador con el id original de Windows
++						if(invoke_item && invoke_item->sys_wid)
++						{
++							sys_id = invoke_item->sys_wid;
++							invoke_item = nullptr;
++						}
++					}
++
++					id = sys_id ? static_cast<int>(sys_id) : 0;
+ 					if(invoke_item && invoke_item->dynamic)
+ 					{
+ 
+@@ -6396,6 +6738,7 @@ namespace Nilesoft
+ 					case WM_ENTERIDLE:
+ 						if(wParam == MSGF_MENU)
+ 						{
++							ctx->toolbar_track();
+ 							//_log.info(L"WM_ENTERIDLE %x %x", wParam, lParam);
+ 							/*if(!ctx->HWNDMenu)
+ 							{
+diff --git a/src/dll/src/Include/ContextMenu.h b/src/dll/src/Include/ContextMenu.h
+index 3a3743b..6f18312 100644
+--- a/src/dll/src/Include/ContextMenu.h
++++ b/src/dll/src/Include/ContextMenu.h
+@@ -716,6 +716,17 @@ plutovg_move_to(pluto, start.x, start.y);
+ 
+ 
+ 			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
++
++			// ---- toolbar ----
++			static constexpr UINT_PTR TOOLBAR_TIMER = 0x4E54; // seguimiento del cursor
++			std::vector<MenuItemInfo *> _toolbars;
++			HFONT _icon_font_override{};
++			void toolbar_layout(const MenuItemInfo *tb, const RECT &rc, std::vector<RECT> &out, std::vector<RECT> *zones = nullptr) const;
++			int  toolbar_hit(const MenuItemInfo *tb, const RECT &rc, POINT pt) const;
++			void toolbar_track();
++			void toolbar_stop();
++			void draw_toolbar(DC &dc, MenuItemInfo *tb, const RECT &rc);
++			menuitem_t *find_system_item(uint32_t uid) const;
+ 			LRESULT OnStart();
+ 			LRESULT OnEnd();
+ 
+diff --git a/src/dll/src/Include/Menu.h b/src/dll/src/Include/Menu.h
+index b7d9d36..8aeecd8 100644
+--- a/src/dll/src/Include/Menu.h
++++ b/src/dll/src/Include/Menu.h
+@@ -259,6 +259,10 @@ namespace Nilesoft
+ 			Scope		variables;
+ 			int32_t		for_each = 0;
+ 			auto_expr	expanded;
++			// toolbar: fila horizontal de botones de solo icono
++			bool		toolbar = false;
++			auto_expr	toolbar_size;
++			auto_expr	toolbar_sys;	// boton de toolbar que ejecuta una entrada del sistema (sys=id.share)
+ 			std::vector<NativeMenu *> items;
+ 			CommandProperty	*cmd{};
+ 
+diff --git a/src/dll/src/Include/MenuItem.h b/src/dll/src/Include/MenuItem.h
+index 8b52161..b80245e 100644
+--- a/src/dll/src/Include/MenuItem.h
++++ b/src/dll/src/Include/MenuItem.h
+@@ -238,6 +238,23 @@ namespace Nilesoft
+ 				explicit operator bool()const { return !text.empty(); }
+ 			}tip;
+ 
++			// toolbar: una sola entrada del menu que dibuja varios botones en fila.
++			// items son las entradas hijas (no se insertan en el HMENU).
++			struct {
++				bool enabled = false;
++				std::vector<MenuItemInfo *> items;
++				int hot = -1;		// boton bajo el cursor (-1 = ninguno)
++				long size = 0;		// tamano del icono (px fisicos)
++				long cell = 0;		// lado de cada boton (px fisicos)
++				long gap = 0;		// separacion entre botones (px fisicos)
++			} toolbar;
++
++			bool is_toolbar() const { return toolbar.enabled; }
++
++			// boton de toolbar respaldado por una entrada del sistema: se ejecuta
++			// devolviendo su id original al Explorador.
++			uint32_t sys_wid = 0;
++
+ 			struct IMAGE
+ 			{
+ 				HBITMAP hbitmap{};
+diff --git a/src/dll/src/Parser/IdentHash.h b/src/dll/src/Parser/IdentHash.h
+index 52576d0..dc36853 100644
+--- a/src/dll/src/Parser/IdentHash.h
++++ b/src/dll/src/Parser/IdentHash.h
+@@ -36,6 +36,7 @@ namespace Nilesoft
+ 		constexpr auto MENU_TYPE_ITEM = 0x7C989E34U;
+ 		constexpr auto MENU_TYPE_SEP = 0x0B88A98DU;
+ 		constexpr auto MENU_TYPE_SEPARATOR = 0x14015AB6U;
++		constexpr auto MENU_TYPE_TOOLBAR = 0xF0254958U; // "toolbar"
+ 		constexpr auto MENU_TYPE_VAR = 0x0B88B5CEU;
+ 
+ 		// Static prop
+diff --git a/src/dll/src/Parser/Parser.cpp b/src/dll/src/Parser/Parser.cpp
+index 81a0bd1..bd3a487 100644
+--- a/src/dll/src/Parser/Parser.cpp
++++ b/src/dll/src/Parser/Parser.cpp
+@@ -465,6 +465,12 @@ namespace Nilesoft
+ 				case MENU_TYPE_SEPARATOR:
+ 					menu->type = NativeMenuType::Separator;
+ 					break;
++				case MENU_TYPE_TOOLBAR:
++					// toolbar(...) { item(...) ... } : se analiza como un menu,
++					// pero se dibuja como una sola fila de botones.
++					menu->type = NativeMenuType::Menu;
++					menu->toolbar = true;
++					break;
+ 				default:
+ 					return error(TokenError::MenuTypeExpected, prevCol);
+ 			}
+@@ -482,7 +488,7 @@ namespace Nilesoft
+ 			{
+ 				error_if(menu->properties <= 0, TokenError::PropertyExpected, l->column - 1);
+ 				
+-				if(!menu->title && !menu->image.defined)
++				if(!menu->toolbar && !menu->title && !menu->image.defined)
+ 					error(TokenError::PropertyTitleOrImageExpected, col_after_open_paren);
+ 
+ 				if(menu->is_item())
+@@ -1236,6 +1242,7 @@ namespace Nilesoft
+ 					case CONFIG_ITEM:
+ 					case CONFIG_SEP:
+ 					case CONFIG_SEPARATOR:
++					case MENU_TYPE_TOOLBAR:
+ 					{
+ 						std::unique_ptr<NativeMenu> item(new NativeMenu(&cache->dynamic));
+ 						if(parse_menu_item(item.get(), id))
+diff --git a/src/dll/src/Parser/Properties.cpp b/src/dll/src/Parser/Properties.cpp
+index f33beb3..5fb4cf1 100644
+--- a/src/dll/src/Parser/Properties.cpp
++++ b/src/dll/src/Parser/Properties.cpp
+@@ -738,6 +738,15 @@ namespace Nilesoft
+ 						case MENU_EXPANDED:
+ 							menu->expanded = id.signer ? expr.release() : new NumberExpression(1);
+ 							break;
++						case IDENT_SIZE:
++							// solo toolbar: tamano de los iconos en pixeles logicos
++							menu->toolbar_size = expr.release();
++							break;
++						case IDENT_SYS:
++						case IDENT_SYSTEM:
++							// solo botones de toolbar: id de una entrada del sistema
++							menu->toolbar_sys = expr.release();
++							break;
+ 						case MENU_ICON:
+ 						case MENU_IMAGE:
+ 						{
+diff --git a/src/dll/src/Parser/Verification.cpp b/src/dll/src/Parser/Verification.cpp
+index 6dc32a9..77afb6f 100644
+--- a/src/dll/src/Parser/Verification.cpp
++++ b/src/dll/src/Parser/Verification.cpp
+@@ -223,6 +223,10 @@ namespace Nilesoft
+ 				{
+ 					case MENU_EXPANDED:
+ 						return check(1, auto_signer);
++					case IDENT_SIZE:
++						if(menu && menu->toolbar)
++							return check(1, assignable);
++						break;
+ 				}
+ 				return check(0);
+ 			}
+@@ -269,6 +273,12 @@ namespace Nilesoft
+ 					case MENU_WINDOW:
+ 						return check(1, assignable);
+ 
++					case IDENT_SYS:
++					case IDENT_SYSTEM:
++						if(menu && menu->owner && menu->owner->toolbar)
++							return check(1, assignable);
++						return check(0);
++
+ 					default:
+ 						return check(0);
+ 				}
