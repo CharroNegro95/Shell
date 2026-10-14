@@ -1,11 +1,10 @@
-# .github/workflows/build.yml  (version para el fork)
-# Cambios respecto al original de moudey/Shell:
-#  - workflow_dispatch: permite lanzar la compilacion a mano desde la pestana Actions.
-#  - BIN_PATH usa github.workspace en vez de una ruta fija que dependia de que
-#    el repositorio se llamara exactamente "Shell".
-#  - Solo x64 para que tarde menos (agrega x86 o arm64 a la lista si los necesitas).
-#  - Conserva los archivos 30 dias.
-#  - Acciones en versiones que ya corren en Node.js 24 (quita el aviso de Node 20).
+# .github/workflows/build.yml  (fork con parches propios)
+#  - workflow_dispatch: compilar a mano desde la pestana Actions.
+#  - BIN_PATH relativo al repositorio (no depende de su nombre).
+#  - Solo x64 (agrega x86 o arm64 a la lista si los necesitas).
+#  - Acciones en versiones que ya corren en Node.js 24.
+#  - Aplica en orden los archivos patches/*.patch antes de compilar
+#    (con finales de linea LF para que los parches apliquen en Windows).
 
 name: Build
 
@@ -36,7 +35,23 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    # Los parches usan finales de linea LF (como estan en el repositorio).
+    # Se desactiva la conversion a CRLF ANTES de descargar el codigo.
+    - name: Keep LF line endings
+      run: git config --global core.autocrlf false
+
     - uses: actions/checkout@v5
+
+    - name: Apply patches
+      shell: bash
+      run: |
+        shopt -s nullglob
+        patches=(patches/*.patch)
+        if [ ${#patches[@]} -eq 0 ]; then echo "Sin parches"; exit 0; fi
+        for p in "${patches[@]}"; do
+          echo "Aplicando $p"
+          git apply --verbose "$p"
+        done
 
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v3
