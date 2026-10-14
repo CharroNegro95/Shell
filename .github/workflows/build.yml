@@ -5,6 +5,7 @@
 #    el repositorio se llamara exactamente "Shell".
 #  - Solo x64 para que tarde menos (agrega x86 o arm64 a la lista si los necesitas).
 #  - Conserva los archivos 30 dias.
+#  - Acciones en versiones que ya corren en Node.js 24 (quita el aviso de Node 20).
 
 name: Build
 
@@ -35,10 +36,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@v3
 
     - name: Restore NuGet packages
       run: nuget restore ${{ env.SOLUTION_FILE_PATH }}
@@ -47,7 +48,7 @@ jobs:
       run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} ${{ env.SOLUTION_FILE_PATH }}
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: shell-${{ matrix.platform }}
         path: |
