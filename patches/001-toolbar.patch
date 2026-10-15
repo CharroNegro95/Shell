@@ -1,5 +1,5 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..fa827da 100644
+index e7239da..147da49 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
 @@ -320,6 +320,21 @@ namespace Nilesoft
@@ -239,7 +239,7 @@ index e7239da..fa827da 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2725,254 @@ namespace Nilesoft
+@@ -2573,9 +2725,359 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -311,6 +311,111 @@ index e7239da..fa827da 100644
 +			w.erase(0, b);
 +			for(auto &ch : w) ch = (wchar_t)towlower(ch);
 +			return w;
++		}
++
++		// ------------------------------------------------------------------
++		// excmd: ejecuta un comando de Windows 11 (IExplorerCommand) por CLSID
++		// sobre la seleccion. Sirve para comandos que el programa solo muestra
++		// en el menu moderno (p. ej. "Combine archivos en Acrobat...").
++		//   excmd='{CLSID}'          -> el comando (o su primer subcomando)
++		//   excmd='{CLSID}|texto'    -> el subcomando cuyo titulo empieza con texto
++		// ------------------------------------------------------------------
++		static bool invoke_explorer_command(const string &spec, const std::vector<Selections::PathItem *> &sel)
++		{
++			std::wstring s = spec.c_str();
++			std::wstring clsid_str = s, sub;
++			if(auto p = s.find(L'|'); p != std::wstring::npos)
++			{
++				clsid_str = s.substr(0, p);
++				sub = normalize_title(s.substr(p + 1).c_str());
++			}
++			while(!clsid_str.empty() && iswspace(clsid_str.back())) clsid_str.pop_back();
++			while(!clsid_str.empty() && iswspace(clsid_str.front())) clsid_str.erase(0, 1);
++
++			CLSID clsid{};
++			if(FAILED(::CLSIDFromString(clsid_str.c_str(), &clsid)))
++				return false;
++
++			const HRESULT hrInit = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
++			bool ok = false;
++			{
++				std::vector<PIDLIST_ABSOLUTE> pidls;
++				for(auto it : sel)
++				{
++					if(!it || it->Path.empty()) continue;
++					PIDLIST_ABSOLUTE pidl = nullptr;
++					if(SUCCEEDED(::SHParseDisplayName(it->Path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
++						pidls.push_back(pidl);
++				}
++
++				IShellItemArray *arr = nullptr;
++				if(!pidls.empty() &&
++				   SUCCEEDED(::SHCreateShellItemArrayFromIDLists((UINT)pidls.size(),
++					   reinterpret_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &arr)) && arr)
++				{
++					IExplorerCommand *cmd = nullptr;
++					if(SUCCEEDED(::CoCreateInstance(clsid, nullptr, CLSCTX_LOCAL_SERVER | CLSCTX_INPROC_SERVER,
++						IID_IExplorerCommand, reinterpret_cast<void **>(&cmd))) && cmd)
++					{
++						IExplorerCommand *target = nullptr;
++						EXPCMDFLAGS flags = 0;
++						if(SUCCEEDED(cmd->GetFlags(&flags)) && (flags & ECF_HASSUBCOMMANDS))
++						{
++							IEnumExplorerCommand *en = nullptr;
++							if(SUCCEEDED(cmd->EnumSubCommands(&en)) && en)
++							{
++								IExplorerCommand *c = nullptr;
++								ULONG fetched = 0;
++								while(!target && en->Next(1, &c, &fetched) == S_OK && c)
++								{
++									bool match = sub.empty();
++									if(!match)
++									{
++										LPWSTR title = nullptr;
++										if(SUCCEEDED(c->GetTitle(arr, &title)) && title)
++										{
++											auto t = normalize_title(title);
++											match = t.size() >= sub.size() && t.compare(0, sub.size(), sub) == 0;
++										}
++										if(title) ::CoTaskMemFree(title);
++									}
++									if(match) target = c;
++									else c->Release();
++									c = nullptr;
++								}
++								en->Release();
++							}
++						}
++						else
++						{
++							target = cmd;
++							target->AddRef();
++						}
++
++						if(target)
++						{
++							ok = SUCCEEDED(target->Invoke(arr, nullptr));
++							target->Release();
++						}
++						cmd->Release();
++					}
++					arr->Release();
++				}
++
++				for(auto p : pidls)
++					::ILFree(p);
++			}
++			if(SUCCEEDED(hrInit))
++				::CoUninitialize();
++			return ok;
++		}
++
++		void ContextMenu::invoke_excmd(NativeMenu *menu)
++		{
++			if(!menu || !menu->excmd) return;
++			string spec;
++			if(_context.Eval(menu->excmd, spec, true) && !spec.empty())
++				invoke_explorer_command(spec, Selected.Items);
 +		}
 +
 +		// Busca en el menu original de Windows la entrada con ese id (id.share, id.edit...).
@@ -494,7 +599,7 @@ index e7239da..fa827da 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4470,6 +4867,18 @@ namespace Nilesoft
+@@ -4470,6 +4972,18 @@ namespace Nilesoft
  				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
  					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
  
@@ -513,7 +618,7 @@ index e7239da..fa827da 100644
  				if(_settings.modify_items.enabled)
  					build_main_system_menuitems(__system_menu_tree, true);
  
-@@ -4500,6 +4909,7 @@ namespace Nilesoft
+@@ -4500,6 +5014,7 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -521,7 +626,7 @@ index e7239da..fa827da 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +4988,26 @@ namespace Nilesoft
+@@ -4578,7 +5093,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -549,7 +654,21 @@ index e7239da..fa827da 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -6396,6 +6825,7 @@ namespace Nilesoft
+@@ -4656,6 +5190,13 @@ namespace Nilesoft
+ 				
+ 				set00(cm);
+ 
++				// excmd: comando de Windows 11 por CLSID (en funcion aparte: aqui hay __try)
++				if(menu->excmd)
++				{
++					cm->invoke_excmd(menu);
++					__leave;
++				}
++
+ 				if(cm->mouse_button)
+ 				{
+ 					ctx->Keyboard->add_key(cm->mouse_button);
+@@ -6396,6 +6937,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
@@ -558,10 +677,10 @@ index e7239da..fa827da 100644
  							/*if(!ctx->HWNDMenu)
  							{
 diff --git a/src/dll/src/Include/ContextMenu.h b/src/dll/src/Include/ContextMenu.h
-index 3a3743b..27109b3 100644
+index 3a3743b..e754a1f 100644
 --- a/src/dll/src/Include/ContextMenu.h
 +++ b/src/dll/src/Include/ContextMenu.h
-@@ -716,6 +716,19 @@ plutovg_move_to(pluto, start.x, start.y);
+@@ -716,6 +716,20 @@ plutovg_move_to(pluto, start.x, start.y);
  
  
  			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
@@ -576,22 +695,24 @@ index 3a3743b..27109b3 100644
 +			void toolbar_stop();
 +			void draw_toolbar(DC &dc, MenuItemInfo *tb, const RECT &rc);
 +			menuitem_t *find_system_item(uint32_t uid) const;
++			void invoke_excmd(NativeMenu *menu);
 +			menuitem_t *find_system_item_by_title(const string &patterns) const;
 +			std::vector<menuitem_t *> __toolbar_sys_items;	// primer nivel, antes de modify/remove
  			LRESULT OnStart();
  			LRESULT OnEnd();
  
 diff --git a/src/dll/src/Include/Menu.h b/src/dll/src/Include/Menu.h
-index b7d9d36..8aeecd8 100644
+index b7d9d36..553c678 100644
 --- a/src/dll/src/Include/Menu.h
 +++ b/src/dll/src/Include/Menu.h
-@@ -259,6 +259,10 @@ namespace Nilesoft
+@@ -259,6 +259,11 @@ namespace Nilesoft
  			Scope		variables;
  			int32_t		for_each = 0;
  			auto_expr	expanded;
 +			// toolbar: fila horizontal de botones de solo icono
 +			bool		toolbar = false;
 +			auto_expr	toolbar_size;
++			auto_expr	excmd;		// item(excmd='{CLSID}' o '{CLSID}|subcomando'): IExplorerCommand de Windows 11
 +			auto_expr	toolbar_sys;	// boton de toolbar que ejecuta una entrada del sistema (sys=id.share)
  			std::vector<NativeMenu *> items;
  			CommandProperty	*cmd{};
@@ -625,14 +746,15 @@ index 8b52161..b80245e 100644
  			{
  				HBITMAP hbitmap{};
 diff --git a/src/dll/src/Parser/IdentHash.h b/src/dll/src/Parser/IdentHash.h
-index 52576d0..dc36853 100644
+index 52576d0..07457d9 100644
 --- a/src/dll/src/Parser/IdentHash.h
 +++ b/src/dll/src/Parser/IdentHash.h
-@@ -36,6 +36,7 @@ namespace Nilesoft
+@@ -36,6 +36,8 @@ namespace Nilesoft
  		constexpr auto MENU_TYPE_ITEM = 0x7C989E34U;
  		constexpr auto MENU_TYPE_SEP = 0x0B88A98DU;
  		constexpr auto MENU_TYPE_SEPARATOR = 0x14015AB6U;
 +		constexpr auto MENU_TYPE_TOOLBAR = 0xF0254958U; // "toolbar"
++		constexpr auto MENU_EXCMD = 0x0F662C16U; // "excmd": comando de Windows 11 por CLSID
  		constexpr auto MENU_TYPE_VAR = 0x0B88B5CEU;
  
  		// Static prop
@@ -671,16 +793,19 @@ index 81a0bd1..bd3a487 100644
  						std::unique_ptr<NativeMenu> item(new NativeMenu(&cache->dynamic));
  						if(parse_menu_item(item.get(), id))
 diff --git a/src/dll/src/Parser/Properties.cpp b/src/dll/src/Parser/Properties.cpp
-index f33beb3..5fb4cf1 100644
+index f33beb3..9009964 100644
 --- a/src/dll/src/Parser/Properties.cpp
 +++ b/src/dll/src/Parser/Properties.cpp
-@@ -738,6 +738,15 @@ namespace Nilesoft
+@@ -738,6 +738,18 @@ namespace Nilesoft
  						case MENU_EXPANDED:
  							menu->expanded = id.signer ? expr.release() : new NumberExpression(1);
  							break;
 +						case IDENT_SIZE:
 +							// solo toolbar: tamano de los iconos en pixeles logicos
 +							menu->toolbar_size = expr.release();
++							break;
++						case MENU_EXCMD:
++							menu->excmd = expr.release();
 +							break;
 +						case IDENT_SYS:
 +						case IDENT_SYSTEM:
@@ -691,7 +816,7 @@ index f33beb3..5fb4cf1 100644
  						case MENU_IMAGE:
  						{
 diff --git a/src/dll/src/Parser/Verification.cpp b/src/dll/src/Parser/Verification.cpp
-index 6dc32a9..77afb6f 100644
+index 6dc32a9..7acdbbc 100644
 --- a/src/dll/src/Parser/Verification.cpp
 +++ b/src/dll/src/Parser/Verification.cpp
 @@ -223,6 +223,10 @@ namespace Nilesoft
@@ -705,10 +830,13 @@ index 6dc32a9..77afb6f 100644
  				}
  				return check(0);
  			}
-@@ -269,6 +273,12 @@ namespace Nilesoft
+@@ -269,6 +273,15 @@ namespace Nilesoft
  					case MENU_WINDOW:
  						return check(1, assignable);
  
++					case MENU_EXCMD:
++						return check(1, assignable);
++
 +					case IDENT_SYS:
 +					case IDENT_SYSTEM:
 +						if(menu && menu->owner && menu->owner->toolbar)
