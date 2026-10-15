@@ -1,5 +1,5 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..076292b 100644
+index e7239da..dfb117d 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
 @@ -320,6 +320,32 @@ namespace Nilesoft
@@ -35,7 +35,7 @@ index e7239da..076292b 100644
  					string value;
  
  					if(!item->is_separator() && !moved)
-@@ -506,6 +532,28 @@ namespace Nilesoft
+@@ -506,6 +532,30 @@ namespace Nilesoft
  							}
  						}
  
@@ -44,6 +44,8 @@ index e7239da..076292b 100644
 +							Color sc;
 +							if(_context.eval_color(item->style_color, &sc))
 +							{
++								// un color sin alfa (#RRGGBB) se toma como opaco
++								if(sc.a == 0) sc.a = 255;
 +								mii->style.has_color = true;
 +								mii->style.color = sc;
 +							}
@@ -64,7 +66,7 @@ index e7239da..076292b 100644
  						mii->separator = (int)_context.parse_separator(item->separator);
  						mii->column = _context.eval_number<int>(item->column, 0);
  						mii->type = NativeMenuType::Item;
-@@ -544,7 +592,7 @@ namespace Nilesoft
+@@ -544,7 +594,7 @@ namespace Nilesoft
  									//use the resolved image location
  									if(item->image.import == ImageImport::Image)
  									{
@@ -73,7 +75,7 @@ index e7239da..076292b 100644
  										{
  											if(mii->image.import == ImageImport::Inherit)
  											{
-@@ -605,7 +653,7 @@ namespace Nilesoft
+@@ -605,7 +655,7 @@ namespace Nilesoft
  										}
  									}
  
@@ -82,7 +84,7 @@ index e7239da..076292b 100644
  									{
  										/*if(mii->image_select.import == ImageImport::Inherit)
  										{
-@@ -649,7 +697,98 @@ namespace Nilesoft
+@@ -649,7 +699,98 @@ namespace Nilesoft
  							//mii->tip = item->tip;
  							_context.eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
  
@@ -182,7 +184,7 @@ index e7239da..076292b 100644
  							{
  								mii->set_popup_menu();
  								//mii->destory = false;
-@@ -1128,6 +1267,38 @@ namespace Nilesoft
+@@ -1128,6 +1269,38 @@ namespace Nilesoft
  				
  				prepare_system_items2(_new_items, menu);
  
@@ -221,7 +223,7 @@ index e7239da..076292b 100644
  				// insert top items
  				if(_new_items.size() > 0)
  					items.insert(items.end(), _new_items.Top.begin(), _new_items.Top.end());
-@@ -1460,6 +1631,16 @@ namespace Nilesoft
+@@ -1460,6 +1633,16 @@ namespace Nilesoft
  								menu->draw.height = rc.bottom;
  						}
  
@@ -238,7 +240,7 @@ index e7239da..076292b 100644
  						menu->popup_height += item->size.cy +
  							_theme.back.padding.top + _theme.back.padding.bottom + 
  							_theme.back.margin.top + _theme.back.margin.bottom;
-@@ -1551,6 +1732,11 @@ namespace Nilesoft
+@@ -1551,6 +1734,11 @@ namespace Nilesoft
  
  			_tip.hide();
  
@@ -250,7 +252,7 @@ index e7239da..076292b 100644
  			/*
  			if(!menu->is_dynamic())
  				menu->dynamics.clear();
-@@ -2078,6 +2264,14 @@ namespace Nilesoft
+@@ -2078,6 +2266,14 @@ namespace Nilesoft
  
  			auto mii = get_item(di->itemID, hMenu, _items);
  
@@ -265,7 +267,7 @@ index e7239da..076292b 100644
  			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
  			{
  				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
-@@ -2167,6 +2361,10 @@ namespace Nilesoft
+@@ -2167,6 +2363,10 @@ namespace Nilesoft
  				}
  			}
  
@@ -276,7 +278,7 @@ index e7239da..076292b 100644
  			const long image_size = _theme.image.size;
  
  			auto rcblock = *rc;
-@@ -2185,6 +2383,10 @@ namespace Nilesoft
+@@ -2185,6 +2385,10 @@ namespace Nilesoft
  				rcblock.right -= _theme.back.margin.right + dpi(3);
  			}
  
@@ -287,7 +289,7 @@ index e7239da..076292b 100644
  			const auto width = rcblock.width();
  			const auto height = rcblock.height();
  
-@@ -2505,7 +2707,12 @@ namespace Nilesoft
+@@ -2505,7 +2709,12 @@ namespace Nilesoft
  			{
  				mi->itemWidth = _theme.back.width();
  				auto mii = get_item(mi->itemID, menu->handle, _items);
@@ -301,7 +303,7 @@ index e7239da..076292b 100644
  				{
  					if(mii->cch == 0)
  					{
-@@ -2530,6 +2737,7 @@ namespace Nilesoft
+@@ -2530,6 +2739,7 @@ namespace Nilesoft
  							mi->itemHeight++;
  
  						mi->itemWidth += std::max<uint32_t>(menu->draw.length, mii->size.cx);
@@ -309,7 +311,7 @@ index e7239da..076292b 100644
  
  						// Remove extra space 'Submenu icon size'
  						mi->itemWidth -= dpi.original(14);
-@@ -2559,6 +2767,7 @@ namespace Nilesoft
+@@ -2559,6 +2769,7 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnEnd()
  		{
@@ -317,7 +319,7 @@ index e7239da..076292b 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2782,459 @@ namespace Nilesoft
+@@ -2573,9 +2784,476 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -579,12 +581,24 @@ index e7239da..076292b 100644
 +		menuitem_t *ContextMenu::find_system_item(uint32_t uid) const
 +		{
 +			if(uid == 0) return nullptr;
++
++			// el id de Nilesoft (id.xxx) tambien se compara contra el hash del titulo
++			// traducido de Windows, por si la entrada no quedo asociada a su id
++			uint32_t title_hash = 0;
++			if(auto mu = Initializer::get_muid(uid); mu)
++				title_hash = mu->hash;
++
++			// si hay varias coincidencias, se prefiere una habilitada
++			menuitem_t *disabled_match = nullptr;
 +			for(auto it : __toolbar_sys_items)
 +			{
-+				if(it->uid() == uid || it->hash == uid)
-+					return it;
++				if(it->uid() == uid || it->hash == uid || (title_hash && it->hash == title_hash))
++				{
++					if(!it->disabled) return it;
++					if(!disabled_match) disabled_match = it;
++				}
 +			}
-+			return nullptr;
++			return disabled_match;
 +		}
 +
 +		// Busca por texto: patrones separados por '|', en orden de preferencia.
@@ -612,12 +626,17 @@ index e7239da..076292b 100644
 +				}
 +				if(pat.empty()) continue;
 +
++				menuitem_t *disabled_match = nullptr;
 +				for(auto it : all)
 +				{
 +					auto t = normalize_title(it->title.c_str());
 +					if(exact ? (t == pat) : (t.size() >= pat.size() && t.compare(0, pat.size(), pat) == 0))
-+						return it;
++					{
++						if(!it->disabled) return it;
++						if(!disabled_match) disabled_match = it;
++					}
 +				}
++				if(disabled_match) return disabled_match;
 +			}
 +			return nullptr;
 +		}
@@ -777,7 +796,7 @@ index e7239da..076292b 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4470,6 +5129,18 @@ namespace Nilesoft
+@@ -4470,6 +5148,31 @@ namespace Nilesoft
  				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
  					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
  
@@ -793,10 +812,23 @@ index e7239da..076292b 100644
 +						__toolbar_sys_items.push_back(it);
 +				}
 +
++				// diagnostico para sys=/nosys=: con Alt presionado al abrir el menu se
++				// registran en shell.log las entradas de Windows disponibles
++				if(Keyboard::IsKeyDown(VK_MENU))
++				{
++					_log.write(L"--- sys: entradas de Windows disponibles ---\r\n");
++					for(auto it : __toolbar_sys_items)
++					{
++						_log.write(L"sys\twid=%u\tid=0x%08X\thash=0x%08X\t%s\t%s\r\n",
++								   it->wid, it->uid(), it->hash, it->disabled ? L"deshabilitada" : L"",
++								   it->title.c_str());
++					}
++				}
++
  				if(_settings.modify_items.enabled)
  					build_main_system_menuitems(__system_menu_tree, true);
  
-@@ -4500,6 +5171,12 @@ namespace Nilesoft
+@@ -4500,6 +5203,12 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -809,7 +841,7 @@ index e7239da..076292b 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +5255,26 @@ namespace Nilesoft
+@@ -4578,7 +5287,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -837,7 +869,7 @@ index e7239da..076292b 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -4656,6 +5352,13 @@ namespace Nilesoft
+@@ -4656,6 +5384,13 @@ namespace Nilesoft
  				
  				set00(cm);
  
@@ -851,7 +883,7 @@ index e7239da..076292b 100644
  				if(cm->mouse_button)
  				{
  					ctx->Keyboard->add_key(cm->mouse_button);
-@@ -6396,6 +7099,7 @@ namespace Nilesoft
+@@ -6396,6 +7131,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
