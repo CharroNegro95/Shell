@@ -1,5 +1,5 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..147da49 100644
+index e7239da..4156b0b 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
 @@ -320,6 +320,21 @@ namespace Nilesoft
@@ -144,11 +144,11 @@ index e7239da..147da49 100644
 +					std::vector<uint32_t> tb_wids;
 +					for(auto plist : { &_new_items.Top, &_new_items.Middle, &_new_items.Bottom, &_new_items.Auto, &_new_items.Custom })
 +					{
-+						for(auto m : *plist)
++						for(auto tbm : *plist)
 +						{
-+							if(m && m->is_toolbar())
++							if(tbm && tbm->is_toolbar())
 +							{
-+								for(auto c : m->toolbar.items)
++								for(auto c : tbm->toolbar.items)
 +									if(c && c->sys_wid) tb_wids.push_back(c->sys_wid);
 +							}
 +						}
@@ -156,10 +156,10 @@ index e7239da..147da49 100644
 +
 +					if(!tb_wids.empty())
 +					{
-+						auto used_by_toolbar = [&tb_wids](MenuItemInfo *m)
++						auto used_by_toolbar = [&tb_wids](MenuItemInfo *sm)
 +						{
-+							return m && !m->is_toolbar() && !m->owner_dynamic && !m->is_separator() &&
-+								std::find(tb_wids.begin(), tb_wids.end(), (uint32_t)m->wID) != tb_wids.end();
++							return sm && !sm->is_toolbar() && !sm->owner_dynamic && !sm->is_separator() &&
++								std::find(tb_wids.begin(), tb_wids.end(), (uint32_t)sm->wID) != tb_wids.end();
 +						};
 +						for(auto plist : { &_system_items.Top, &_system_items.Middle, &_system_items.Bottom, &_system_items.Auto, &_system_items.Custom,
 +										   &_new_items.Top, &_new_items.Middle, &_new_items.Bottom, &_new_items.Auto, &_new_items.Custom })
@@ -239,7 +239,7 @@ index e7239da..147da49 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2725,359 @@ namespace Nilesoft
+@@ -2573,9 +2725,361 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -348,10 +348,12 @@ index e7239da..147da49 100644
 +						pidls.push_back(pidl);
 +				}
 +
++				// la API pide un arreglo de punteros const: se copia a ese tipo
++				std::vector<PCIDLIST_ABSOLUTE> cpidls(pidls.begin(), pidls.end());
++
 +				IShellItemArray *arr = nullptr;
-+				if(!pidls.empty() &&
-+				   SUCCEEDED(::SHCreateShellItemArrayFromIDLists((UINT)pidls.size(),
-+					   reinterpret_cast<PCIDLIST_ABSOLUTE_ARRAY>(pidls.data()), &arr)) && arr)
++				if(!cpidls.empty() &&
++				   SUCCEEDED(::SHCreateShellItemArrayFromIDLists((UINT)cpidls.size(), cpidls.data(), &arr)) && arr)
 +				{
 +					IExplorerCommand *cmd = nullptr;
 +					if(SUCCEEDED(::CoCreateInstance(clsid, nullptr, CLSCTX_LOCAL_SERVER | CLSCTX_INPROC_SERVER,
@@ -599,7 +601,7 @@ index e7239da..147da49 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4470,6 +4972,18 @@ namespace Nilesoft
+@@ -4470,6 +4974,18 @@ namespace Nilesoft
  				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
  					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
  
@@ -618,7 +620,7 @@ index e7239da..147da49 100644
  				if(_settings.modify_items.enabled)
  					build_main_system_menuitems(__system_menu_tree, true);
  
-@@ -4500,6 +5014,7 @@ namespace Nilesoft
+@@ -4500,6 +5016,7 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
@@ -626,7 +628,7 @@ index e7239da..147da49 100644
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +5093,26 @@ namespace Nilesoft
+@@ -4578,7 +5095,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -654,7 +656,7 @@ index e7239da..147da49 100644
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -4656,6 +5190,13 @@ namespace Nilesoft
+@@ -4656,6 +5192,13 @@ namespace Nilesoft
  				
  				set00(cm);
  
@@ -668,7 +670,7 @@ index e7239da..147da49 100644
  				if(cm->mouse_button)
  				{
  					ctx->Keyboard->add_key(cm->mouse_button);
-@@ -6396,6 +6937,7 @@ namespace Nilesoft
+@@ -6396,6 +6939,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
