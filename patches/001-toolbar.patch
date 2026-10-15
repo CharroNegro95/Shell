@@ -1,8 +1,8 @@
 diff --git a/src/dll/src/ContextMenu.cpp b/src/dll/src/ContextMenu.cpp
-index e7239da..4156b0b 100644
+index e7239da..43d2dfb 100644
 --- a/src/dll/src/ContextMenu.cpp
 +++ b/src/dll/src/ContextMenu.cpp
-@@ -320,6 +320,21 @@ namespace Nilesoft
+@@ -320,6 +320,32 @@ namespace Nilesoft
  							continue;
  					}
  
@@ -20,14 +20,40 @@ index e7239da..4156b0b 100644
 +						if(!sys_item)
 +							continue;
 +					}
++					if(item->nosys)
++					{
++						Object ns_obj = _context.Eval(item->nosys).move();
++						menuitem_t *found = nullptr;
++						if(ns_obj.is_string())
++							found = find_system_item_by_title(ns_obj.to_string());
++						else if(ns_obj.is_number())
++							found = find_system_item(ns_obj.to_number<uint32_t>());
++						if(found)
++							continue;
++					}
 +
  					string value;
  
  					if(!item->is_separator() && !moved)
-@@ -506,6 +521,13 @@ namespace Nilesoft
+@@ -506,6 +532,28 @@ namespace Nilesoft
  							}
  						}
  
++						if(item->style_color)
++						{
++							Color sc;
++							if(_context.eval_color(item->style_color, &sc))
++							{
++								mii->style.has_color = true;
++								mii->style.color = sc;
++							}
++						}
++						if(item->indent)
++						{
++							auto ind = _context.eval_number<int>(item->indent, 0);
++							if(ind > 0) mii->style.indent = dpi((long)ind);
++						}
++
 +						if(sys_item)
 +						{
 +							mii->sys_wid = sys_item->wid;
@@ -38,7 +64,7 @@ index e7239da..4156b0b 100644
  						mii->separator = (int)_context.parse_separator(item->separator);
  						mii->column = _context.eval_number<int>(item->column, 0);
  						mii->type = NativeMenuType::Item;
-@@ -544,7 +566,7 @@ namespace Nilesoft
+@@ -544,7 +592,7 @@ namespace Nilesoft
  									//use the resolved image location
  									if(item->image.import == ImageImport::Image)
  									{
@@ -47,7 +73,7 @@ index e7239da..4156b0b 100644
  										{
  											if(mii->image.import == ImageImport::Inherit)
  											{
-@@ -605,7 +627,7 @@ namespace Nilesoft
+@@ -605,7 +653,7 @@ namespace Nilesoft
  										}
  									}
  
@@ -56,12 +82,12 @@ index e7239da..4156b0b 100644
  									{
  										/*if(mii->image_select.import == ImageImport::Inherit)
  										{
-@@ -649,7 +671,77 @@ namespace Nilesoft
+@@ -649,7 +697,97 @@ namespace Nilesoft
  							//mii->tip = item->tip;
  							_context.eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
  
 -							if(item->is_menu())
-+							if(sys_item && !mii->tip && !sys_item->title.empty())
++							if(sys_item && item->owner && item->owner->toolbar && !mii->tip && !sys_item->title.empty())
 +							{
 +								std::wstring ws = sys_item->title.c_str();
 +								std::erase(ws, L'&');
@@ -130,12 +156,32 @@ index e7239da..4156b0b 100644
 +								mii->toolbar.size = tsize;
 +								mii->toolbar.cell = tsize + dpi(12L);
 +								mii->toolbar.gap = dpi(4L);
++
++								// filas: un boton con col empieza una fila nueva;
++								// una fila lleva leyendas si algun boton tiene title
++								{
++									int r = 0;
++									for(size_t i = 0; i < mii->toolbar.items.size(); i++)
++									{
++										auto child = mii->toolbar.items[i];
++										if(i > 0 && child->column > 0) r++;
++										mii->toolbar.row.push_back(r);
++										if((int)mii->toolbar.row_labeled.size() <= r)
++											mii->toolbar.row_labeled.push_back(false);
++										if(!child->title.empty())
++											mii->toolbar.row_labeled[r] = true;
++									}
++									long small = ((long)_theme.text.size * 3) / 4;
++									if(small < dpi(9L)) small = dpi(9L);
++									mii->toolbar.label_px = small;
++									mii->toolbar.label_h = small + dpi(6L);
++								}
 +							}
 +							else if(item->is_menu())
  							{
  								mii->set_popup_menu();
  								//mii->destory = false;
-@@ -1128,6 +1220,36 @@ namespace Nilesoft
+@@ -1128,6 +1266,38 @@ namespace Nilesoft
  				
  				prepare_system_items2(_new_items, menu);
  
@@ -151,6 +197,8 @@ index e7239da..4156b0b 100644
 +								for(auto c : tbm->toolbar.items)
 +									if(c && c->sys_wid) tb_wids.push_back(c->sys_wid);
 +							}
++							else if(tbm && tbm->sys_wid)
++								tb_wids.push_back(tbm->sys_wid);
 +						}
 +					}
 +
@@ -172,14 +220,14 @@ index e7239da..4156b0b 100644
  				// insert top items
  				if(_new_items.size() > 0)
  					items.insert(items.end(), _new_items.Top.begin(), _new_items.Top.end());
-@@ -1460,6 +1582,16 @@ namespace Nilesoft
+@@ -1460,6 +1630,16 @@ namespace Nilesoft
  								menu->draw.height = rc.bottom;
  						}
  
 +						if(item->is_toolbar())
 +						{
 +							item->toolbar.hot = -1;
-+							item->size.cy = item->toolbar.cell;
++							item->size.cy = toolbar_height(item);
 +							_toolbars.push_back(item);
 +							// el menu modal no entrega WM_MOUSEMOVE: se sigue el cursor con un timer
 +							if(hwnd.owner)
@@ -189,7 +237,7 @@ index e7239da..4156b0b 100644
  						menu->popup_height += item->size.cy +
  							_theme.back.padding.top + _theme.back.padding.bottom + 
  							_theme.back.margin.top + _theme.back.margin.bottom;
-@@ -1551,6 +1683,11 @@ namespace Nilesoft
+@@ -1551,6 +1731,11 @@ namespace Nilesoft
  
  			_tip.hide();
  
@@ -201,7 +249,7 @@ index e7239da..4156b0b 100644
  			/*
  			if(!menu->is_dynamic())
  				menu->dynamics.clear();
-@@ -2078,6 +2215,14 @@ namespace Nilesoft
+@@ -2078,6 +2263,14 @@ namespace Nilesoft
  
  			auto mii = get_item(di->itemID, hMenu, _items);
  
@@ -216,22 +264,51 @@ index e7239da..4156b0b 100644
  			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
  			{
  				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
-@@ -2505,7 +2650,13 @@ namespace Nilesoft
+@@ -2167,6 +2360,10 @@ namespace Nilesoft
+ 				}
+ 			}
+ 
++			// color=: color propio del texto (y de los iconos tipo glifo)
++			if(mii->style.has_color && !state.disabled)
++				text_color = mii->style.color;
++
+ 			const long image_size = _theme.image.size;
+ 
+ 			auto rcblock = *rc;
+@@ -2185,6 +2382,10 @@ namespace Nilesoft
+ 				rcblock.right -= _theme.back.margin.right + dpi(3);
+ 			}
+ 
++			// indent=: la entrada se recorre a la derecha (fondo, icono y texto)
++			if(mii->style.indent > 0)
++				rcblock.left += mii->style.indent;
++
+ 			const auto width = rcblock.width();
+ 			const auto height = rcblock.height();
+ 
+@@ -2505,7 +2706,12 @@ namespace Nilesoft
  			{
  				mi->itemWidth = _theme.back.width();
  				auto mii = get_item(mi->itemID, menu->handle, _items);
 -				if(mii)
 +				if(mii && mii->is_toolbar())
 +				{
-+					auto n = (long)mii->toolbar.items.size();
-+					mi->itemHeight = (UINT)(mii->toolbar.cell + _theme.back.height() + dpi(4L));
-+					mi->itemWidth += (UINT)(n * mii->toolbar.cell + (n - 1) * mii->toolbar.gap);
++					mi->itemHeight = (UINT)(toolbar_height(mii) + _theme.back.height() + dpi(4L));
++					mi->itemWidth += (UINT)toolbar_min_width(mii);
 +				}
 +				else if(mii)
  				{
  					if(mii->cch == 0)
  					{
-@@ -2559,6 +2710,7 @@ namespace Nilesoft
+@@ -2530,6 +2736,7 @@ namespace Nilesoft
+ 							mi->itemHeight++;
+ 
+ 						mi->itemWidth += std::max<uint32_t>(menu->draw.length, mii->size.cx);
++						mi->itemWidth += (UINT)mii->style.indent;
+ 
+ 						// Remove extra space 'Submenu icon size'
+ 						mi->itemWidth -= dpi.original(14);
+@@ -2559,6 +2766,7 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnEnd()
  		{
@@ -239,7 +316,7 @@ index e7239da..4156b0b 100644
  			Selections::point = { 0, 0 };
  			//InvokeCommand(selectid);
  			current.zero();
-@@ -2573,9 +2725,361 @@ namespace Nilesoft
+@@ -2573,9 +2781,459 @@ namespace Nilesoft
  
  		LRESULT ContextMenu::OnTimer([[maybe_unused]] UINT_PTR nIDEvent, [[maybe_unused]] TIMERPROC Timerproc)
  		{
@@ -255,32 +332,108 @@ index e7239da..4156b0b 100644
 +		// toolbar
 +		// ------------------------------------------------------------------
 +
-+		// Rectangulos de los botones repartidos a lo ancho de la fila rc:
-+		// la fila se divide en partes iguales (zones) y cada boton va centrado
-+		// en la suya, asi la barra ocupa todo el ancho del menu.
++		// ---- geometria de la barra (varias filas, con o sin leyendas) ----
++
++		// alto de una fila: celda del icono + area de leyenda si la fila la lleva
++		static long tb_row_height(const MenuItemInfo *tb, int r)
++		{
++			long h = tb->toolbar.cell;
++			if(r >= 0 && r < (int)tb->toolbar.row_labeled.size() && tb->toolbar.row_labeled[r])
++				h += tb->toolbar.label_h;
++			return h;
++		}
++
++		static int tb_row_count(const MenuItemInfo *tb)
++		{
++			return tb->toolbar.row.empty() ? 1 : tb->toolbar.row.back() + 1;
++		}
++
++		long ContextMenu::toolbar_height(const MenuItemInfo *tb) const
++		{
++			const int rows = tb_row_count(tb);
++			long h = 0;
++			for(int r = 0; r < rows; r++)
++				h += tb_row_height(tb, r);
++			h += (rows - 1) * tb->toolbar.gap;
++			return h;
++		}
++
++		long ContextMenu::toolbar_min_width(const MenuItemInfo *tb) const
++		{
++			const int rows = tb_row_count(tb);
++			long w = 0;
++			for(int r = 0; r < rows; r++)
++			{
++				long n = 0;
++				for(auto rr : tb->toolbar.row) if(rr == r) n++;
++				if(n == 0) continue;
++				const bool labeled = r < (int)tb->toolbar.row_labeled.size() && tb->toolbar.row_labeled[r];
++				const long bw = labeled ? tb->toolbar.cell * 2 : tb->toolbar.cell;
++				const long rw = n * bw + (n - 1) * tb->toolbar.gap;
++				if(rw > w) w = rw;
++			}
++			return w;
++		}
++
++		// Rectangulos de los botones. Cada fila se reparte a lo ancho de rc en
++		// partes iguales (zones) y cada boton va centrado en la suya. En filas con
++		// leyendas el boton es mas ancho para que quepa el texto.
 +		void ContextMenu::toolbar_layout(const MenuItemInfo *tb, const RECT &rc, std::vector<RECT> &out, std::vector<RECT> *zones) const
 +		{
 +			out.clear();
 +			if(zones) zones->clear();
-+			const long n = (long)tb->toolbar.items.size();
-+			if(n <= 0) return;
++			const long count = (long)tb->toolbar.items.size();
++			if(count <= 0) return;
 +
 +			const long cell = tb->toolbar.cell;
++			const long gap = tb->toolbar.gap;
 +			const long left = rc.left + (long)_theme.back.margin.left;
 +			const long right = rc.right - (long)_theme.back.margin.right;
-+			const long y = rc.top + ((rc.bottom - rc.top) - cell) / 2;
++			const int rows = tb_row_count(tb);
 +
-+			long slot = (right - left) / n;
-+			if(slot < cell) slot = cell;
++			out.resize(count);
++			if(zones) zones->resize(count);
 +
-+			for(long i = 0; i < n; i++)
++			long y = rc.top + ((rc.bottom - rc.top) - toolbar_height(tb)) / 2;
++			for(int r = 0; r < rows; r++)
 +			{
-+				const long zl = left + i * slot;
-+				// sin std::max: windows.h define la macro max y rompe la llamada
-+				const long zr = (i == n - 1 && right > zl + slot) ? right : zl + slot;
-+				const long x = zl + ((zr - zl) - cell) / 2;
-+				out.push_back(RECT{ x, y, x + cell, y + cell });
-+				if(zones) zones->push_back(RECT{ zl, rc.top, zr, rc.bottom });
++				const long rh = tb_row_height(tb, r);
++				const bool labeled = r < (int)tb->toolbar.row_labeled.size() && tb->toolbar.row_labeled[r];
++
++				std::vector<long> idx;
++				for(long i = 0; i < count; i++)
++					if(i < (long)tb->toolbar.row.size() && tb->toolbar.row[i] == r) idx.push_back(i);
++
++				const long n = (long)idx.size();
++				if(n > 0)
++				{
++					long slot = (right - left) / n;
++					if(slot < cell) slot = cell;
++
++					long bw = cell;
++					if(labeled)
++					{
++						bw = slot - gap;
++						if(bw > cell * 3) bw = cell * 3;
++						if(bw < cell) bw = cell;
++					}
++
++					for(long k = 0; k < n; k++)
++					{
++						const long zl = left + k * slot;
++						const long zr = (k == n - 1 && right > zl + slot) ? right : zl + slot;
++						const long x = zl + ((zr - zl) - bw) / 2;
++						out[idx[k]] = RECT{ x, y, x + bw, y + rh };
++						if(zones)
++						{
++							// la zona incluye la mitad del hueco entre filas
++							const long zt = (r == 0) ? rc.top : y - gap / 2;
++							const long zb = (r == rows - 1) ? rc.bottom : y + rh + gap - gap / 2;
++							(*zones)[idx[k]] = RECT{ zl, zt, zr, zb };
++						}
++					}
++				}
++				y += rh + gap;
 +			}
 +		}
 +
@@ -292,7 +445,8 @@ index e7239da..4156b0b 100644
 +			toolbar_layout(tb, rc, btns, &zones);
 +			for(int i = 0; i < (int)zones.size(); i++)
 +			{
-+				if(pt.x >= zones[i].left && pt.x < zones[i].right)
++				if(pt.x >= zones[i].left && pt.x < zones[i].right &&
++				   pt.y >= zones[i].top && pt.y < zones[i].bottom)
 +					return i;
 +			}
 +			return -1;
@@ -525,12 +679,22 @@ index e7239da..4156b0b 100644
 +			const long isz = tb->toolbar.size;
 +			const long cell = tb->toolbar.cell;
 +
++			// letra pequena para las leyendas (se crea una vez por menu)
++			if(!_toolbar_label_font && tb->toolbar.label_px > 0)
++			{
++				LOGFONTW lf = _theme.font;
++				lf.lfHeight = -tb->toolbar.label_px;
++				lf.lfWidth = 0;
++				_toolbar_label_font = ::CreateFontIndirectW(&lf);
++			}
++
 +			for(int i = 0; i < (int)btns.size(); i++)
 +			{
 +				auto child = tb->toolbar.items[i];
 +				const RECT b = btns[i];
 +				const bool hot = (i == tb->toolbar.hot);
 +				const bool disabled = child->visibility != Visibility::Enabled;
++				const long bw = b.right - b.left;
 +
 +				Color text_color = hot ? _theme.text.color.sel : _theme.text.color.nor;
 +				if(disabled) text_color = hot ? _theme.text.color.sel_dis : _theme.text.color.nor_dis;
@@ -539,8 +703,11 @@ index e7239da..4156b0b 100644
 +				{
 +					Color back = disabled ? _theme.back.color.sel_dis : _theme.back.color.sel;
 +					Color border = disabled ? _theme.back.border.sel_dis : _theme.back.border.sel;
-+					draw_rect(&dc, POINT{ b.left, b.top }, SIZE{ cell, cell }, back, border, _theme.back.radius);
++					draw_rect(&dc, POINT{ b.left, b.top }, SIZE{ bw, b.bottom - b.top }, back, border, _theme.back.radius);
 +				}
++
++				// el icono ocupa la parte de arriba del boton (toda, si no hay leyenda)
++				const RECT ri = { b.left + (bw - cell) / 2, b.top, b.left + (bw - cell) / 2 + cell, b.top + cell };
 +
 +				auto image = &child->image;
 +				if(hot && child->image_select.isvalid())
@@ -555,7 +722,7 @@ index e7239da..4156b0b 100644
 +						{
 +							const long w = image->size.cx > 0 ? image->size.cx : isz;
 +							const long h = image->size.cy > 0 ? image->size.cy : isz;
-+							POINT p = { b.left + (cell - w) / 2, b.top + (cell - h) / 2 };
++							POINT p = { ri.left + (cell - w) / 2, ri.top + (cell - h) / 2 };
 +							dc.draw_image(p, SIZE{ w, h }, memDC, disabled ? 64 : 255);
 +							memDC.reset_bitmap();
 +						}
@@ -571,13 +738,21 @@ index e7239da..4156b0b 100644
 +						if(!c1) c1 = _theme.image.color[0] ? _theme.image.color[1] : text_color;
 +						if(disabled) { c0.opacities(); c1.opacities(); }
 +
-+						const Rect rcGlyph(b);
++						const Rect rcGlyph(ri);
 +						const DWORD fmt = DT_NOCLIP | DT_SINGLELINE | DT_VCENTER | DT_CENTER;
 +						if(g->code[0])
 +							draw_string(dc, g->font, &rcGlyph, c0, &g->code[0], 1, fmt);
 +						if(g->code[1])
 +							draw_string(dc, g->font, &rcGlyph, c1, &g->code[1], 1, fmt);
 +					}
++				}
++
++				// leyenda debajo del icono, en letra pequena
++				if(!child->title.empty() && _toolbar_label_font)
++				{
++					const Rect rcLabel(RECT{ b.left + dpi(2L), ri.bottom - dpi(3L), b.right - dpi(2L), b.bottom });
++					draw_string(dc, _toolbar_label_font, &rcLabel, text_color, child->title.text.c_str(),
++								(int)child->title.length(), DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 +				}
 +			}
 +
@@ -601,7 +776,7 @@ index e7239da..4156b0b 100644
  		void ContextMenu::init_cfg()
  		{
  			//SystemParametersInfoForDpi
-@@ -4470,6 +4974,18 @@ namespace Nilesoft
+@@ -4470,6 +5128,18 @@ namespace Nilesoft
  				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
  					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
  
@@ -620,15 +795,20 @@ index e7239da..4156b0b 100644
  				if(_settings.modify_items.enabled)
  					build_main_system_menuitems(__system_menu_tree, true);
  
-@@ -4500,6 +5016,7 @@ namespace Nilesoft
+@@ -4500,6 +5170,12 @@ namespace Nilesoft
  					_hMenu = nullptr;
  				}
  
 +				toolbar_stop();
++				if(_toolbar_label_font)
++				{
++					::DeleteObject(_toolbar_label_font);
++					_toolbar_label_font = nullptr;
++				}
  				_windowSubclass.unhook();
  
  				if(_hTheme)
-@@ -4578,7 +5095,26 @@ namespace Nilesoft
+@@ -4578,7 +5254,26 @@ namespace Nilesoft
  						}
  					}
  
@@ -643,20 +823,20 @@ index e7239da..4156b0b 100644
 +
 +						if(invoke_item && invoke_item->visibility != Visibility::Enabled)
 +							invoke_item = nullptr;
++					}
 +
-+						// boton sys=: lo ejecuta el Explorador con el id original de Windows
-+						if(invoke_item && invoke_item->sys_wid)
-+						{
-+							sys_id = invoke_item->sys_wid;
-+							invoke_item = nullptr;
-+						}
++					// sys= (boton o entrada normal): lo ejecuta el Explorador con el id original de Windows
++					if(invoke_item && invoke_item->sys_wid)
++					{
++						sys_id = invoke_item->sys_wid;
++						invoke_item = nullptr;
 +					}
 +
 +					id = sys_id ? static_cast<int>(sys_id) : 0;
  					if(invoke_item && invoke_item->dynamic)
  					{
  
-@@ -4656,6 +5192,13 @@ namespace Nilesoft
+@@ -4656,6 +5351,13 @@ namespace Nilesoft
  				
  				set00(cm);
  
@@ -670,7 +850,7 @@ index e7239da..4156b0b 100644
  				if(cm->mouse_button)
  				{
  					ctx->Keyboard->add_key(cm->mouse_button);
-@@ -6396,6 +6939,7 @@ namespace Nilesoft
+@@ -6396,6 +7098,7 @@ namespace Nilesoft
  					case WM_ENTERIDLE:
  						if(wParam == MSGF_MENU)
  						{
@@ -679,10 +859,10 @@ index e7239da..4156b0b 100644
  							/*if(!ctx->HWNDMenu)
  							{
 diff --git a/src/dll/src/Include/ContextMenu.h b/src/dll/src/Include/ContextMenu.h
-index 3a3743b..e754a1f 100644
+index 3a3743b..3155688 100644
 --- a/src/dll/src/Include/ContextMenu.h
 +++ b/src/dll/src/Include/ContextMenu.h
-@@ -716,6 +716,20 @@ plutovg_move_to(pluto, start.x, start.y);
+@@ -716,6 +716,23 @@ plutovg_move_to(pluto, start.x, start.y);
  
  
  			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
@@ -691,7 +871,10 @@ index 3a3743b..e754a1f 100644
 +			static constexpr UINT_PTR TOOLBAR_TIMER = 0x4E54; // seguimiento del cursor
 +			std::vector<MenuItemInfo *> _toolbars;
 +			HFONT _icon_font_override{};
++			HFONT _toolbar_label_font{};	// letra pequena de las leyendas
 +			void toolbar_layout(const MenuItemInfo *tb, const RECT &rc, std::vector<RECT> &out, std::vector<RECT> *zones = nullptr) const;
++			long toolbar_height(const MenuItemInfo *tb) const;
++			long toolbar_min_width(const MenuItemInfo *tb) const;
 +			int  toolbar_hit(const MenuItemInfo *tb, const RECT &rc, POINT pt) const;
 +			void toolbar_track();
 +			void toolbar_stop();
@@ -704,10 +887,10 @@ index 3a3743b..e754a1f 100644
  			LRESULT OnEnd();
  
 diff --git a/src/dll/src/Include/Menu.h b/src/dll/src/Include/Menu.h
-index b7d9d36..553c678 100644
+index b7d9d36..f0ce6f7 100644
 --- a/src/dll/src/Include/Menu.h
 +++ b/src/dll/src/Include/Menu.h
-@@ -259,6 +259,11 @@ namespace Nilesoft
+@@ -259,6 +259,14 @@ namespace Nilesoft
  			Scope		variables;
  			int32_t		for_each = 0;
  			auto_expr	expanded;
@@ -715,15 +898,18 @@ index b7d9d36..553c678 100644
 +			bool		toolbar = false;
 +			auto_expr	toolbar_size;
 +			auto_expr	excmd;		// item(excmd='{CLSID}' o '{CLSID}|subcomando'): IExplorerCommand de Windows 11
++			auto_expr	nosys;		// item visible solo si NO existe esa entrada de Windows
++			auto_expr	style_color;	// color=: color del texto (p. ej. color.accent)
++			auto_expr	indent;		// indent=: sangria a la derecha (px logicos)
 +			auto_expr	toolbar_sys;	// boton de toolbar que ejecuta una entrada del sistema (sys=id.share)
  			std::vector<NativeMenu *> items;
  			CommandProperty	*cmd{};
  
 diff --git a/src/dll/src/Include/MenuItem.h b/src/dll/src/Include/MenuItem.h
-index 8b52161..b80245e 100644
+index 8b52161..d40961f 100644
 --- a/src/dll/src/Include/MenuItem.h
 +++ b/src/dll/src/Include/MenuItem.h
-@@ -238,6 +238,23 @@ namespace Nilesoft
+@@ -238,6 +238,34 @@ namespace Nilesoft
  				explicit operator bool()const { return !text.empty(); }
  			}tip;
  
@@ -736,7 +922,18 @@ index 8b52161..b80245e 100644
 +				long size = 0;		// tamano del icono (px fisicos)
 +				long cell = 0;		// lado de cada boton (px fisicos)
 +				long gap = 0;		// separacion entre botones (px fisicos)
++				std::vector<int> row;			// fila de cada boton (col en un boton = nueva fila)
++				std::vector<bool> row_labeled;	// la fila lleva leyendas (algun boton con title)
++				long label_h = 0;	// alto del area de leyenda (px fisicos)
++				long label_px = 0;	// tamano de la letra de leyenda (px fisicos)
 +			} toolbar;
++
++			// estilo propio de una entrada nueva
++			struct {
++				bool has_color = false;
++				Color color;
++				long indent = 0;	// px fisicos
++			} style;
 +
 +			bool is_toolbar() const { return toolbar.enabled; }
 +
@@ -748,15 +945,17 @@ index 8b52161..b80245e 100644
  			{
  				HBITMAP hbitmap{};
 diff --git a/src/dll/src/Parser/IdentHash.h b/src/dll/src/Parser/IdentHash.h
-index 52576d0..07457d9 100644
+index 52576d0..4e0d82e 100644
 --- a/src/dll/src/Parser/IdentHash.h
 +++ b/src/dll/src/Parser/IdentHash.h
-@@ -36,6 +36,8 @@ namespace Nilesoft
+@@ -36,6 +36,10 @@ namespace Nilesoft
  		constexpr auto MENU_TYPE_ITEM = 0x7C989E34U;
  		constexpr auto MENU_TYPE_SEP = 0x0B88A98DU;
  		constexpr auto MENU_TYPE_SEPARATOR = 0x14015AB6U;
 +		constexpr auto MENU_TYPE_TOOLBAR = 0xF0254958U; // "toolbar"
 +		constexpr auto MENU_EXCMD = 0x0F662C16U; // "excmd": comando de Windows 11 por CLSID
++		constexpr auto MENU_NOSYS = 0x10045EE1U; // "nosys": mostrar solo si Windows NO ofrece esa entrada
++		constexpr auto MENU_INDENT = 0x04CBC867U; // "indent": sangria a la derecha (px logicos)
  		constexpr auto MENU_TYPE_VAR = 0x0B88B5CEU;
  
  		// Static prop
@@ -795,10 +994,10 @@ index 81a0bd1..bd3a487 100644
  						std::unique_ptr<NativeMenu> item(new NativeMenu(&cache->dynamic));
  						if(parse_menu_item(item.get(), id))
 diff --git a/src/dll/src/Parser/Properties.cpp b/src/dll/src/Parser/Properties.cpp
-index f33beb3..9009964 100644
+index f33beb3..d6834ef 100644
 --- a/src/dll/src/Parser/Properties.cpp
 +++ b/src/dll/src/Parser/Properties.cpp
-@@ -738,6 +738,18 @@ namespace Nilesoft
+@@ -738,6 +738,27 @@ namespace Nilesoft
  						case MENU_EXPANDED:
  							menu->expanded = id.signer ? expr.release() : new NumberExpression(1);
  							break;
@@ -809,6 +1008,15 @@ index f33beb3..9009964 100644
 +						case MENU_EXCMD:
 +							menu->excmd = expr.release();
 +							break;
++						case MENU_NOSYS:
++							menu->nosys = expr.release();
++							break;
++						case IDENT_COLOR:
++							menu->style_color = expr.release();
++							break;
++						case MENU_INDENT:
++							menu->indent = expr.release();
++							break;
 +						case IDENT_SYS:
 +						case IDENT_SYSTEM:
 +							// solo botones de toolbar: id de una entrada del sistema
@@ -818,10 +1026,19 @@ index f33beb3..9009964 100644
  						case MENU_IMAGE:
  						{
 diff --git a/src/dll/src/Parser/Verification.cpp b/src/dll/src/Parser/Verification.cpp
-index 6dc32a9..7acdbbc 100644
+index 6dc32a9..f9f12d1 100644
 --- a/src/dll/src/Parser/Verification.cpp
 +++ b/src/dll/src/Parser/Verification.cpp
-@@ -223,6 +223,10 @@ namespace Nilesoft
+@@ -213,6 +213,8 @@ namespace Nilesoft
+ 					case MENU_PARENT:
+ 					case MENU_SUB:
+ 					case MENU_TIP:
++					case IDENT_COLOR:
++					case MENU_INDENT:
+ 						return check(1, assignable);
+ 				}
+ 			}
+@@ -223,6 +225,10 @@ namespace Nilesoft
  				{
  					case MENU_EXPANDED:
  						return check(1, auto_signer);
@@ -832,18 +1049,15 @@ index 6dc32a9..7acdbbc 100644
  				}
  				return check(0);
  			}
-@@ -269,6 +273,15 @@ namespace Nilesoft
+@@ -269,6 +275,12 @@ namespace Nilesoft
  					case MENU_WINDOW:
  						return check(1, assignable);
  
 +					case MENU_EXCMD:
-+						return check(1, assignable);
-+
++					case MENU_NOSYS:
 +					case IDENT_SYS:
 +					case IDENT_SYSTEM:
-+						if(menu && menu->owner && menu->owner->toolbar)
-+							return check(1, assignable);
-+						return check(0);
++						return check(1, assignable);
 +
  					default:
  						return check(0);
